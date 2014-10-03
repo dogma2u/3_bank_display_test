@@ -1,0 +1,107 @@
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/*
+    This program is for displaying text on two pdsp1880 displays, and
+    uses the OSEEP PRO MINI with a Atmel 328 running at 5 Volts and at 16 MHZ.
+  
+    Program writes the total character set (TotalDisChar) from left to right, incrementing DisPosCount until TotalDig is reached, 
+    then returns to left most display and increments Char2Dis by one. This is repeated until TotalDisChar plus TotalDig minus 1 is reached.
+    Some conditional math is done between Char2Count and Char2Dis to account for the offest between the variables caused by writting left to right until reaching TotalDig.
+    Some math is also needed at the end of the character set being displayed, to cause the character set to wraps around from beginning to end.
+    By accounting for these offsets, when the display reaches the end of the character set, this offset makes the displayed character set wraps around from beginning to end.
+    Scroll speed is controled by reading analog port 0 (ScrollspdVal) and converts and scales the potentiometer value into milliseconds (Timeinms).
+    At lesser delay times, this has the effect of making the display look like it is scrolling the character set from right to left.
+ 
+              (Master Display)           (Slave Display)            (Slave Display)        (OSEEP PRO MINI 328)
+  
+              G          +G G            G          +G G            G          +G G            D       GRRT                         
+              XXDDDDNNNDD5NNN            NDDDDDNNNDD5NNN            NDDDDDNNNDD5NNN            DDDDDDDDGSXX         
+              D65432CCC10VDCD            D65432CCC10VDCD            D65432CCC10VDCD            98765432DT01
+            |-----------------|        |-----------------|        |-----------------|        |--------------|R  
+            |                 |        |                 |        |                 |        |             T|S 
+            |  DPSP 1880 (1)  |        |  DPSP 1880 (2)  |        |  DPSP 1880 (3)  |        | PRO MINI    T|2    
+            | 1               |        | 1               |        | 1               |        |   328       L|3 
+            |-----------------|        |-----------------|        |-----------------|        |--------------|2 
+              R+DDD+NNN++|DD+            R+DDD+NNN+GDDD+            R+DDD+NNN+GDDD+            DDDD|AAA+RGR   
+              S58915CCC551715            S58915CCC5N17|5            S58915CCC5N1715            1111|1235SNA 
+              TV  0V   VV1 1V            TV  0V   VD2 2V            TV  0V   VD3 3V            0123|   VTDW     
+                                                                                                   |
+                                                                                                   |Wiper                                                                                                    
+                                                                                          CCW   |-----|
+                                                                                          GND---| 50K |---+5v
+                                                                                                |-----|   CW
+  
+  
+   NANO  CHIP  PIN  FUNCTION
+   LABAL NAME   #
+   RX0 = PD0 = 30 = Display Bit 0
+   TX1 = PD1 = 31 = Display Bit 1
+   D2  = PD2 = 32 = Display Bit 2
+   D3  = PD3 =  1 = Display Bit 3
+   D4  = PD4 =  2 = Display Bit 4
+   D5  = PD5 =  9 = Display Bit 5
+   D6  = PD6 = 10 = Display Bit 6
+   D7  = PD7 = 11 = Display Write when low
+   D8  = PB0 = 12 = Display A0
+   D9  = PB1 = 13 = Display A1
+   D10 = PB2 = 14 = Display A2
+   D11 = PB3 = 15 = Display Bank Select (1) 
+   D12 = PB4 = 16 = Display Bank Select (2) 
+   D13 = PB5 = 17 = Display Bank Select (3)
+   A0  = PC0 = 23 = Wiper of 10k ten turn potentiometer.
+   VIN = +5 volts
+   GND = Ground
+   RST = Reset
+   NC  = No Connection                                                                         
+  
+   ***************************************************************************  Written by Jim Burney 07/08/2013  ***************************************************************************     
+  
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+*/
+
+//  Program start                  // initialize and declare variables.
+byte Bank = 0xff;
+const byte TotalDisChar = 0x7f;    // Total displayable ASCII characters.
+const byte TotalDig = 0x17;        // Number of digit in display.
+int ScrollSpd = A0;                // Selects Analog 0 for the input pin that the potentiometer wiper ties to.
+//int WrRate = 20;
+int Timeinms = 35;                 // Initial time delay in milliseconds between each display digit write. 
+//int  TimeinmsD = 25;
+byte DisPosCount = 0x00;           // Value 0. to 15. for the display digit that will be written to.
+const byte DisWR = 0x00;           // Value 0. Used to toggle PB4 low and DisPosCount is added to this value to write to display digit position.
+const byte DisIdle = 0x80;         // Value 16. Used to keep PB4 high and disable writting to display.
+byte Char2Count = 0x00;            // Value 0 to 90. Holds ASCII character count that Char2Dis will display.
+byte Char2Dis = 0x00;              // Value 0 to ff. Actual character sent to display after calculations.
+const byte ScrMax = 500;           // Maximum delay in milliseconds.
+const byte ScrMin = 20;            // Minimum delay in milliseconds.
+                   // Setup hardware to be used on NANO
+void setup() 
+{ 
+   DDRD = 0xff;                   // Sets Port D as outputs.
+   DDRB = 0xff;                   // Sets Port B PB0, PB1 ,PB2 ,PB3, PB4, PB5, PB6 and PB7 as outputs.
+   PORTD = (0x20);                // Sets display to blank character (ASCII Space hex), so no garbage shows up.
+} 
+                   //  Main program loop                                                              // This is were the work gets done 
+void loop() 
+{
+
+if (Char2Count >= TotalDig) { Char2Count=Char2Count-TotalDig; }                                      // Offset counter for number of digits in display after fist pass.
+for (DisPosCount=0; DisPosCount <= TotalDig; DisPosCount++) {                                        // Controls display position to put character in. (Digit loop counter).
+  PORTD = (DisIdle|Char2Dis);                                                                        // Sets display to display position count and holds WR line high, ending write cycle, so no garbage gets written.
+if (Char2Count >= TotalDisChar) { Char2Dis=Char2Count-TotalDisChar; } else { Char2Dis=Char2Count; }  // Allows Char2Dis to pass TotalDisChar for wrap around at end of TotalDisChar.
+if (Char2Count < TotalDisChar+TotalDig-1) { Char2Count++; } else { Char2Count=0; }                   // Char2Count total Loop Counter. 
+ Timeinms = map(analogRead(ScrollSpd), 0, 1023, ScrMin, ScrMax);                                        //set scroll spped between 20ms and 500ms.
+if (DisPosCount <= 7) { Bank = 0xf0; }                                                               //1111 0000 Selects left display
+if (DisPosCount > 7)  { Bank = 0xe8; }                                                               //1110 1000 Selects mid display
+if (DisPosCount > 15) { Bank = 0xd8; }                                                               //1101 1000 Selects right display
+  PORTB = (Bank|DisPosCount);                                                                        // Selects the display bank and display position to display to be writtin to.
+  PORTD = (DisWR|Char2Dis);                                                                          // selects character to display.
+//TimeinmsD = map(analogRead(WrRate), 0, 1023, 0, 50);
+//delay( TimeinmsD);
+}                                                                                                    // Return DisPosCount Loop
+ delay(Timeinms);                                                                                    // Hold display idle in milliseconds to adjustthe speed of scrolling.
+}                                                                                                    // Return void loop
+                                                                                                     // Program END
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
